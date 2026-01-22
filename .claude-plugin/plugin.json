@@ -1,0 +1,9 @@
+{
+  "name": "multi-review",
+  "description": "Orchestrate PR reviews across Claude Code, Codex, and Gemini",
+  "version": "0.1.0",
+  "author": {
+    "name": "Corey Maher"
+  },
+  "repository": "https://github.com/coreymaher/claude-multi-review"
+}

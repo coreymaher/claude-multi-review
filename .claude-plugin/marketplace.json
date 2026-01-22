@@ -1,0 +1,18 @@
+{
+  "name": "claude-multi-review",
+  "owner": {
+    "name": "Corey Maher"
+  },
+  "metadata": {
+    "description": "PR review orchestration across multiple AI tools",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "multi-review",
+      "source": "./",
+      "description": "Orchestrate PR reviews across Claude Code, Codex, and Gemini",
+      "version": "0.1.0"
+    }
+  ]
+}
