@@ -21,6 +21,7 @@ Usage:
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -148,12 +149,16 @@ async def run_claude(prompt: str, working_dir: Path) -> ReviewResult:
         "json",
     ]
 
+    # Allow nested Claude Code sessions by unsetting the guard variable
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=working_dir,
+        env=env,
     )
 
     stdout, stderr = await proc.communicate(input=prompt.encode())
