@@ -22,6 +22,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -51,6 +52,90 @@ class ReviewResult:
     error: str | None = None
     session_id: str | None = None
     duration_seconds: float | None = None
+
+
+@dataclass
+class ToolVersionInfo:
+    github_repo: str  # e.g. "anthropics/claude-code"
+    tag_prefix: str  # e.g. "v" or "rust-v" — stripped from tag to get version
+    version_parse_re: str  # regex to extract version from --version output
+
+
+TOOL_VERSION_INFO: dict[str, ToolVersionInfo] = {
+    "claude": ToolVersionInfo(
+        github_repo="anthropics/claude-code",
+        tag_prefix="v",
+        version_parse_re=r"([\d.]+)",
+    ),
+    "codex": ToolVersionInfo(
+        github_repo="openai/codex",
+        tag_prefix="rust-v",
+        version_parse_re=r"([\d.]+)",
+    ),
+    "gemini": ToolVersionInfo(
+        github_repo="google-gemini/gemini-cli",
+        tag_prefix="v",
+        version_parse_re=r"([\d.]+)",
+    ),
+}
+
+
+def parse_version(version_str: str) -> tuple[int, ...]:
+    """Parse a version string like '1.2.3' into a comparable tuple."""
+    return tuple(int(x) for x in version_str.split("."))
+
+
+async def check_tool_version(tool: str) -> tuple[str, str | None, str | None]:
+    """Check installed vs latest version for a tool. Returns (tool, installed, latest)."""
+    info = TOOL_VERSION_INFO.get(tool)
+    if not info:
+        return (tool, None, None)
+
+    # Get installed version
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            tool, "--version",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        match = re.search(info.version_parse_re, stdout.decode())
+        installed = match.group(1) if match else None
+    except FileNotFoundError:
+        installed = None
+
+    # Get latest version from GitHub releases
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "gh", "release", "view",
+            "--repo", info.github_repo,
+            "--json", "tagName",
+            "-q", ".tagName",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        tag = stdout.decode().strip()
+        latest = tag.removeprefix(info.tag_prefix) if tag else None
+    except FileNotFoundError:
+        latest = None
+
+    return (tool, installed, latest)
+
+
+async def check_all_versions(tools: list[str]) -> list[str]:
+    """Check versions for all tools, return list of warning messages."""
+    results = await asyncio.gather(*(check_tool_version(t) for t in tools))
+    warnings = []
+    for tool, installed, latest in results:
+        if not installed or not latest:
+            continue
+        try:
+            if parse_version(installed) < parse_version(latest):
+                warnings.append(f"  {tool}: {installed} -> {latest}")
+        except ValueError:
+            continue
+    return warnings
 
 
 def build_claude_prompt(prs: list[PR], review_dir: Path, project_root: Path) -> str:
@@ -312,6 +397,9 @@ async def run_reviews(
     for tool in tools:
         print(f"  {tool.capitalize():10} running", flush=True)
 
+    # Run version checks concurrently with reviews
+    version_task = asyncio.create_task(check_all_versions(tools))
+
     # Run all in parallel and collect results as they complete
     results: list[ReviewResult] = []
     for coro in asyncio.as_completed(tasks):
@@ -319,6 +407,13 @@ async def run_reviews(
         results.append(result)
         status = "done" if result.success else f"FAILED: {result.error}"
         print(f"  {result.tool.capitalize():10} {status}", flush=True)
+
+    # Print version warnings if any
+    version_warnings = await version_task
+    if version_warnings:
+        print("\nUpdate(s) available:")
+        for warning in version_warnings:
+            print(warning)
 
     return results
 
