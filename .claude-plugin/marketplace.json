@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "PR review orchestration across multiple AI tools",
-    "version": "0.3.1"
+    "version": "0.3.2"
   },
   "plugins": [
     {
       "name": "multi-review",
       "source": "./",
       "description": "Orchestrate PR reviews across Claude Code, Codex, and Gemini",
-      "version": "0.3.1"
+      "version": "0.3.2"
     }
   ]
 }

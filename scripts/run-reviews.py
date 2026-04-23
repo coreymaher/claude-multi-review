@@ -346,6 +346,9 @@ async def run_gemini(prompt: str, working_dir: Path) -> ReviewResult:
         "gemini-3-flash-preview",
         "--output-format",
         "json",
+        # Empty -p puts gemini in headless mode; prompt is piped via stdin.
+        "-p",
+        "",
     ]
 
     proc = await asyncio.create_subprocess_exec(
