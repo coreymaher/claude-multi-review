@@ -20,7 +20,6 @@ find_config() {
         fi
         dir="$(dirname "$dir")"
     done
-    return 1
 }
 
 CONFIG_FILE=$(find_config)
@@ -109,7 +108,7 @@ parse_pr_token() {
         number="${BASH_REMATCH[2]}"
     else
         echo ""
-        return 1
+        return
     fi
 
     # Resolve nickname to actual repo name

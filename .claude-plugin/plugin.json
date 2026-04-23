@@ -1,7 +1,7 @@
 {
   "name": "multi-review",
   "description": "Orchestrate PR reviews across Claude Code, Codex, and Gemini",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": {
     "name": "Corey Maher"
   },

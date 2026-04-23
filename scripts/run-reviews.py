@@ -23,10 +23,36 @@ import asyncio
 import json
 import os
 import re
+import signal
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+
+async def _communicate_with_cleanup(
+    proc: asyncio.subprocess.Process, input: bytes | None = None
+) -> tuple[bytes, bytes]:
+    """Like proc.communicate() but kills the whole process group on cancellation.
+
+    Review tools can spawn child processes that outlive the direct subprocess
+    if only the immediate child is killed. On cancellation we send SIGTERM to
+    the process group, give it 3s to drain, then SIGKILL.
+    Requires the subprocess to be started with start_new_session=True.
+    """
+    try:
+        return await proc.communicate(input=input)
+    except BaseException:
+        try:
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, signal.SIGTERM)
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=3.0)
+            except asyncio.TimeoutError:
+                os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        raise
 
 
 @dataclass
@@ -244,9 +270,10 @@ async def run_claude(prompt: str, working_dir: Path) -> ReviewResult:
         stderr=asyncio.subprocess.PIPE,
         cwd=working_dir,
         env=env,
+        start_new_session=True,
     )
 
-    stdout, stderr = await proc.communicate(input=prompt.encode())
+    stdout, stderr = await _communicate_with_cleanup(proc, input=prompt.encode())
     output = stdout.decode()
 
     # Parse session_id from JSON output
@@ -283,9 +310,10 @@ async def run_codex(prompt: str, working_dir: Path) -> ReviewResult:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=working_dir,
+        start_new_session=True,
     )
 
-    stdout, stderr = await proc.communicate()
+    stdout, stderr = await _communicate_with_cleanup(proc)
     output = stdout.decode()
 
     # Parse thread_id from first JSON line (thread.started event)
@@ -314,6 +342,8 @@ async def run_gemini(prompt: str, working_dir: Path) -> ReviewResult:
     cmd = [
         "gemini",
         "--yolo",
+        "-m",
+        "gemini-3-flash-preview",
         "--output-format",
         "json",
     ]
@@ -324,9 +354,10 @@ async def run_gemini(prompt: str, working_dir: Path) -> ReviewResult:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=working_dir,
+        start_new_session=True,
     )
 
-    stdout, stderr = await proc.communicate(input=prompt.encode())
+    stdout, stderr = await _communicate_with_cleanup(proc, input=prompt.encode())
     output = stdout.decode()
 
     # Parse session_id from JSON output
@@ -404,6 +435,21 @@ async def run_reviews(
     results: list[ReviewResult] = []
     for coro in asyncio.as_completed(tasks):
         result = await coro
+
+        # Verify the tool actually wrote its feedback file. A tool can exit 0
+        # without calling any write tool (seen with some model/CLI combos),
+        # so trusting the return code alone produces phantom successes.
+        if result.success:
+            expected = review_dir / f"FEEDBACK_{result.tool}.md"
+            if not expected.exists():
+                result.success = False
+                snippet = (result.output or "").strip()[:500]
+                result.error = (
+                    f"No {expected.name} written. "
+                    f"Tail of stdout: {snippet!r}" if snippet
+                    else f"No {expected.name} written and stdout was empty."
+                )
+
         results.append(result)
         status = "done" if result.success else f"FAILED: {result.error}"
         print(f"  {result.tool.capitalize():10} {status}", flush=True)
